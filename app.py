@@ -1,13 +1,13 @@
 import os
+import io
 import streamlit as st
 from dotenv import load_dotenv
 import google.generativeai as genai
 from gtts import gTTS
-import io
 import speech_recognition as sr
 from streamlit_webrtc import webrtc_streamer, AudioProcessorBase
 
-# === Load env ===
+# Load API key
 if "GEMINI_API_KEY" in st.secrets:
     gemini_api_key = st.secrets["GEMINI_API_KEY"]
 else:
@@ -20,44 +20,46 @@ gemini_model = genai.GenerativeModel("gemini-2.0-flash")
 st.set_page_config(page_title="🎙️ Gemini Voice Bot")
 st.title("🎙️ Gemini Voice Bot")
 
-st.write("🎤 Click Start to record your question in your browser:")
+st.write("🎤 Click Start and speak:")
 
-# === Use streamlit-webrtc ===
 class AudioProcessor(AudioProcessorBase):
-    def recv(self, frame):
-        return frame  # required by the interface but not used here
+    def __init__(self):
+        self.buffer = b""
+
+    def recv_audio(self, frame):
+        self.buffer += frame.to_ndarray().tobytes()
+        return frame
 
 ctx = webrtc_streamer(
     key="speech",
     mode="SENDRECV",
-    audio_receiver_size=256,
+    audio_receiver_size=1024,
     media_stream_constraints={"video": False, "audio": True},
+    audio_processor_factory=AudioProcessor,
     async_processing=True,
 )
 
-if ctx.audio_receiver:
-    import av
-    audio_frames = ctx.audio_receiver.get_frames(timeout=1)
-    wav_buffer = io.BytesIO()
-    with av.open(wav_buffer, mode='w', format='wav') as wf:
-        for frame in audio_frames:
-            wf.write(frame)
-    wav_buffer.seek(0)
-    st.audio(wav_buffer, format="audio/wav")
+if ctx.state.playing:
+    st.info("Recording... Speak into your mic.")
+elif ctx.audio_processor:
+    st.success("Recording finished. Processing...")
+
+    # Save raw audio bytes to WAV for SpeechRecognition
+    wav_io = io.BytesIO(ctx.audio_processor.buffer)
+    with open("temp.wav", "wb") as f:
+        f.write(wav_io.read())
 
     recognizer = sr.Recognizer()
-    with sr.AudioFile(wav_buffer) as source:
+    with sr.AudioFile("temp.wav") as source:
         audio_data = recognizer.record(source)
         try:
             question = recognizer.recognize_google(audio_data)
             st.write(f"**You said:** {question}")
 
-            # Gemini response
             response = gemini_model.generate_content(question)
             answer = response.text
             st.write(f"**Gemini:** {answer}")
 
-            # TTS in-memory
             tts = gTTS(answer)
             mp3_fp = io.BytesIO()
             tts.write_to_fp(mp3_fp)
@@ -66,4 +68,4 @@ if ctx.audio_receiver:
             st.audio(mp3_fp, format="audio/mp3")
 
         except Exception as e:
-            st.error(f"Could not process audio: {e}")
+            st.error(f"Error: {e}")
