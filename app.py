@@ -10,38 +10,45 @@ import os
 # Load Gemini key
 load_dotenv()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-gemini = genai.GenerativeModel("gemini-1.5-flash")
+gemini = genai.GenerativeModel("gemini-2.0-flash")
 
 st.set_page_config(page_title="🎙️ Gemini Voice Bot")
 st.title("🎙️ Real-Time Gemini Voice Bot")
 
-# Record
-audio = mic_recorder(start_prompt="🎙️ Start recording", stop_prompt="⏹️ Stop recording", key="recorder")
+# 1️⃣ Record audio
+audio = mic_recorder(
+    start_prompt="🎙️ Start recording",
+    stop_prompt="⏹️ Stop recording",
+    key="recorder"
+)
 
+# 2️⃣ If recorded, decode base64 & save to file
 if audio:
-    st.success("Audio recorded!")
-    # Convert base64 to WAV bytes
-    audio_bytes = base64.b64decode(audio['audio_data'].split(",")[1])
-    # Save to file
+    st.success("✅ Audio recorded!")
+
+    # audio is a string like: "data:audio/wav;base64,...."
+    audio_bytes = base64.b64decode(audio.split(",")[1])
     with open("temp_audio.wav", "wb") as f:
         f.write(audio_bytes)
 
-    # Transcribe
-    r = sr.Recognizer()
+    # 3️⃣ Transcribe
+    recognizer = sr.Recognizer()
     with sr.AudioFile("temp_audio.wav") as source:
-        audio_data = r.record(source)
+        audio_data = recognizer.record(source)
         try:
-            text = r.recognize_google(audio_data)
-            st.write("You said:", text)
+            text = recognizer.recognize_google(audio_data)
+            st.write("🗣️ You said:", text)
 
             if st.button("💬 Generate Response"):
-                with st.spinner("Thinking..."):
-                    response = gemini.generate_content(text)
-                    answer = response.text
+                with st.spinner("🤖 Thinking..."):
+                    gemini_response = gemini.generate_content(text)
+                    answer = gemini_response.text
                     st.write("🤖 Gemini says:", answer)
 
+                    # TTS output
                     tts = gTTS(answer)
                     tts.save("response.mp3")
                     st.audio("response.mp3", format="audio/mp3")
+
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Speech Recognition Error: {e}")
