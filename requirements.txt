@@ -3,3 +3,6 @@ python-dotenv
 google-generativeai
 gtts
 streamlit-webrtc
+pyaudio 
+SpeechRecognition
+pipwin
