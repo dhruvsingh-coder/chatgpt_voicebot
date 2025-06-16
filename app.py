@@ -10,7 +10,7 @@ import os
 # Load Gemini key
 load_dotenv()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-gemini = genai.GenerativeModel("gemini-2.0-flash")
+gemini = genai.GenerativeModel("gemini-1.5-flash")
 
 st.set_page_config(page_title="🎙️ Gemini Voice Bot")
 st.title("🎙️ Real-Time Gemini Voice Bot")
@@ -26,8 +26,13 @@ audio = mic_recorder(
 if audio:
     st.success("✅ Audio recorded!")
 
-    # audio is a string like: "data:audio/wav;base64,...."
-    audio_bytes = base64.b64decode(audio.split(",")[1])
+    # Handle dict or string robustly
+    if isinstance(audio, dict):
+        audio_data_url = audio["audio_data"]
+    else:
+        audio_data_url = audio
+
+    audio_bytes = base64.b64decode(audio_data_url.split(",")[1])
     with open("temp_audio.wav", "wb") as f:
         f.write(audio_bytes)
 
