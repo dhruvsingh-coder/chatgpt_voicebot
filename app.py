@@ -41,6 +41,30 @@ audio_bytes = audio_recorder(
     icon_size="2x",
 )
 
+def process_audio_with_gemini(audio_bytes):
+    """Process audio bytes with Gemini's speech-to-text"""
+    try:
+        # Create a temporary file
+        with NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
+            temp_audio.write(audio_bytes)
+            temp_path = temp_audio.name
+        
+        # Create the proper audio input format for Gemini
+        audio_file = genai.upload_file(path=temp_path, mime_type="audio/wav")
+        
+        # Generate content with the audio file
+        response = gemini_model.generate_content(
+            ["Transcribe this audio:", audio_file]
+        )
+        return response.text
+    finally:
+        # Clean up the temporary file
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        # Delete the uploaded file from Gemini's servers
+        if 'audio_file' in locals():
+            genai.delete_file(audio_file.name)
+
 # Process audio when new recording is available
 if audio_bytes and not st.session_state.processing:
     current_hash = get_audio_hash(audio_bytes)
@@ -50,48 +74,30 @@ if audio_bytes and not st.session_state.processing:
         st.session_state.last_audio_hash = current_hash
         
         try:
-            # Create a unique temp file path
-            temp_filename = f"temp_audio_{int(time.time())}.wav"
-            
-            # Save audio to file
-            with open(temp_filename, "wb") as f:
-                f.write(audio_bytes)
-            
             # Display audio player
             st.audio(audio_bytes, format="audio/wav")
             
             # Transcribe using Gemini's speech-to-text
             with st.spinner("🔊 Processing your voice..."):
-                try:
-                    audio_file = {"mime_type": "audio/wav", "file_path": temp_filename}
-                    response = gemini_model.generate_content(["Transcribe this audio:", audio_file])
-                    transcription = response.text
-                    st.write(f"**You said:** {transcription}")
+                transcription = process_audio_with_gemini(audio_bytes)
+                st.write(f"**You said:** {transcription}")
+                
+                # Generate response
+                with st.spinner("🧠 Thinking..."):
+                    chat_response = gemini_model.generate_content(transcription)
+                    answer = chat_response.text
+                    st.write(f"**Gemini:** {answer}")
                     
-                    # Generate response
-                    with st.spinner("🧠 Thinking..."):
-                        chat_response = gemini_model.generate_content(transcription)
-                        answer = chat_response.text
-                        st.write(f"**Gemini:** {answer}")
-                        
-                        # Convert response to speech
-                        with st.spinner("🗣️ Preparing voice response..."):
-                            tts = gTTS(answer, lang='en')
-                            audio_fp = io.BytesIO()
-                            tts.write_to_fp(audio_fp)
-                            audio_fp.seek(0)
-                            st.audio(audio_fp, format='audio/mp3')
-                except Exception as e:
-                    st.error(f"Error processing with Gemini: {str(e)}")
+                    # Convert response to speech
+                    with st.spinner("🗣️ Preparing voice response..."):
+                        tts = gTTS(answer, lang='en')
+                        audio_fp = io.BytesIO()
+                        tts.write_to_fp(audio_fp)
+                        audio_fp.seek(0)
+                        st.audio(audio_fp, format='audio/mp3')
         except Exception as e:
-            st.error(f"Error handling audio file: {str(e)}")
+            st.error(f"Error processing: {str(e)}")
         finally:
-            # Clean up temp file
-            try:
-                if os.path.exists(temp_filename):
-                    os.remove(temp_filename)
-            except:
-                pass
             st.session_state.processing = False
 
 # Text fallback
@@ -112,12 +118,3 @@ if text_input and not st.session_state.processing:
             tts.write_to_fp(audio_fp)
             audio_fp.seek(0)
             st.audio(audio_fp, format='audio/mp3')
-
-# Add some troubleshooting info
-st.sidebar.markdown("""
-### Troubleshooting:
-1. Allow microphone access when prompted
-2. Speak clearly into your microphone
-3. Hold the button while speaking
-4. Release to send your question
-""")
