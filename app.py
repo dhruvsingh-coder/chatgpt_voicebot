@@ -68,6 +68,17 @@ def text_to_speech(text):
 
 # --- Always show recorder ---
 st.subheader("🎤 Speak your next question")
+
+# --- Remove white border around recorder button ---
+st.markdown("""
+    <style>
+    button[title="Hold to Talk"] {
+        border: none !important;
+        box-shadow: none !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 audio_bytes = audio_recorder(
     pause_threshold=10.0,
     sample_rate=44100,
@@ -108,7 +119,6 @@ if audio_bytes:
             'audio': audio_response
         })
 
-        # Rerun so new history appears & recorder stays visible
         st.experimental_rerun()
 
 # --- Text fallback ---
