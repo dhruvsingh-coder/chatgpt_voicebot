@@ -1,7 +1,6 @@
-streamlit
-streamlit-webrtc
-google-generativeai
-SpeechRecognition
-gTTS
-pydub
-python-dotenv
+streamlit>=1.32.0
+python-dotenv>=1.0.0
+google-generativeai>=0.3.0
+gTTS>=2.3.1
+SpeechRecognition>=3.10.0
+pydub>=0.25.1
