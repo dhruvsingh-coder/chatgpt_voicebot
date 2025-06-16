@@ -1,77 +1,76 @@
 import os
-import av
-import io
 import streamlit as st
 from dotenv import load_dotenv
 import google.generativeai as genai
-import speech_recognition as sr
 from gtts import gTTS
-from streamlit_webrtc import webrtc_streamer, AudioProcessorBase
+import io
+import speech_recognition as sr
+from tempfile import NamedTemporaryFile
 
 # === Load environment ===
 load_dotenv()
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-gemini_model = genai.GenerativeModel("gemini-2.0-flash")
+gemini_api_key = os.getenv("GEMINI_API_KEY")
 
-st.set_page_config(page_title="🎙️ Gemini Voice Bot")
-st.title("🎙️ Gemini Voice Bot 🤖🎤")
+# Configure Gemini
+genai.configure(api_key=gemini_api_key)
+gemini_model = genai.GenerativeModel("gemini-1.5-flash")  # Updated to latest model
 
-# ✅ FIXED multiline text using triple quotes
-st.write("""
-1️⃣ Click **Start**  
-2️⃣ Speak into mic  
-3️⃣ Click **Stop**  
-4️⃣ Click **Process & Send to Gemini**  
-5️⃣ Hear Gemini's answer!
-""")
+# App UI
+st.set_page_config(page_title="🎙️ Gemini Voice Bot", page_icon="🎙️")
+st.title("🎙️ Gemini Voice Bot")
+st.write("Click the microphone button to record your question (2-10 seconds works best):")
 
-# === WebRTC audio recorder ===
+# === Audio Recording ===
+audio_bytes = st.audio_recorder("🎤 Speak now", pause_threshold=2.0)
 
-class AudioProcessor(AudioProcessorBase):
-    def __init__(self) -> None:
-        self.frames = []
+# Text fallback
+text_input = st.text_input("Or type your question here:")
 
-    def recv_audio(self, frame: av.AudioFrame) -> av.AudioFrame:
-        self.frames.append(frame.to_ndarray().tobytes())
-        return frame
-
-    def get_audio(self):
-        return b"".join(self.frames)
-
-ctx = webrtc_streamer(
-    key="speech",
-    mode="SENDRECV",
-    audio_processor_factory=AudioProcessor,
-    media_stream_constraints={"audio": True, "video": False},
-    async_processing=True,
-)
-
-if ctx.state.audio_processor:
-    if st.button("🎙️ Process & Send to Gemini"):
-        audio_bytes = ctx.state.audio_processor.get_audio()
-        
-        # Save raw PCM as WAV
-        temp_wav = "temp.wav"
-        with open(temp_wav, "wb") as f:
-            f.write(audio_bytes)
-
-        # Use SpeechRecognition to transcribe
-        recognizer = sr.Recognizer()
-        with sr.AudioFile(temp_wav) as source:
+# === Process Input ===
+question = ""
+if audio_bytes:
+    recognizer = sr.Recognizer()
+    
+    # Create a temporary WAV file
+    with NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
+        temp_audio.write(audio_bytes)
+        temp_audio_path = temp_audio.name
+    
+    try:
+        with sr.AudioFile(temp_audio_path) as source:
             audio_data = recognizer.record(source)
-            try:
-                question = recognizer.recognize_google(audio_data)
-                st.success(f"**You said:** {question}")
+            question = recognizer.recognize_google(audio_data)
+            st.success(f"🎤 You said: {question}")
+    except sr.UnknownValueError:
+        st.error("Google Speech Recognition could not understand audio")
+    except sr.RequestError as e:
+        st.error(f"Could not request results from Google Speech Recognition service; {e}")
+    finally:
+        # Clean up temporary file
+        if os.path.exists(temp_audio_path):
+            os.unlink(temp_audio_path)
 
-                response = gemini_model.generate_content(question)
-                answer = response.text
-                st.info(f"**Gemini says:** {answer}")
+elif text_input:
+    question = text_input
 
-                tts = gTTS(answer)
-                mp3_io = io.BytesIO()
-                tts.write_to_fp(mp3_io)
-                mp3_io.seek(0)
-                st.audio(mp3_io, format="audio/mp3")
-
-            except Exception as e:
-                st.error(f"Error: {e}")
+# === Generate and Speak Response ===
+if question:
+    with st.spinner("Generating response..."):
+        try:
+            response = gemini_model.generate_content(question)
+            answer = response.text
+            
+            st.subheader("🤖 Gemini Response:")
+            st.write(answer)
+            
+            # Text-to-Speech
+            with st.spinner("Generating audio..."):
+                tts = gTTS(answer, lang='en')
+                audio_fp = io.BytesIO()
+                tts.write_to_fp(audio_fp)
+                audio_fp.seek(0)
+                
+                st.audio(audio_fp, format="audio/mp3")
+                
+        except Exception as e:
+            st.error(f"Error generating response: {e}")
