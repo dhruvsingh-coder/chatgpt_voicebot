@@ -2,44 +2,52 @@ import os
 import streamlit as st
 from dotenv import load_dotenv
 import google.generativeai as genai
-import speech_recognition as sr
 from gtts import gTTS
+from streamlit_webrtc import webrtc_streamer, AudioProcessorBase
+import av
+import speech_recognition as sr
 
-# === Load env ===
+# Load env
 load_dotenv()
 gemini_api_key = os.getenv("GEMINI_API_KEY")
-
 genai.configure(api_key=gemini_api_key)
 gemini_model = genai.GenerativeModel("gemini-2.0-flash")
-
-# === Speech recognizer ===
-recognizer = sr.Recognizer()
 
 st.set_page_config(page_title="🎙️ Gemini Voice Bot")
 st.title("🎙️ Gemini Voice Bot")
 
-if st.button("🎤 Record Your Question"):
-    with sr.Microphone() as source:
-        st.info("Listening... Speak now!")
-        audio = recognizer.listen(source)
+class AudioProcessor(AudioProcessorBase):
+    def __init__(self):
+        self.recognizer = sr.Recognizer()
+        self.audio_data = []
 
-    try:
-        question = recognizer.recognize_google(audio)
-        st.write(f"**You said:** {question}")
+    def recv_audio(self, frame: av.AudioFrame):
+        self.audio_data.append(frame.to_ndarray().tobytes())
 
-        # Gemini response
+    def get_audio_bytes(self):
+        return b"".join(self.audio_data)
+
+# Stream mic
+ctx = webrtc_streamer(key="speech")
+
+if ctx.audio_receiver:
+    if st.button("Process Speech"):
+        audio_bytes = ctx.audio_receiver.get_frames().recv().to_ndarray().tobytes()
+        # Save to wav
+        with open("temp.wav", "wb") as f:
+            f.write(audio_bytes)
+
+        r = sr.Recognizer()
+        with sr.AudioFile("temp.wav") as source:
+            audio = r.record(source)
+            question = r.recognize_google(audio)
+
+        st.write(f"You said: {question}")
+
         response = gemini_model.generate_content(question)
         answer = response.text
-        st.write(f"**Gemini:** {answer}")
+        st.write(f"Gemini: {answer}")
 
-        # === TTS with gTTS ===
         tts = gTTS(answer)
         tts.save("output.mp3")
-
-        # Play in Streamlit
-        audio_file = open("output.mp3", "rb")
-        audio_bytes = audio_file.read()
-        st.audio(audio_bytes, format="audio/mp3")
-
-    except Exception as e:
-        st.error(f"Error: {e}")
+        st.audio("output.mp3", format="audio/mp3")
