@@ -1,6 +1,6 @@
-streamlit>=1.34
-git+https://github.com/SebastianM-C/streamlit-mic-recorder.git
-SpeechRecognition
-gTTS
+streamlit
 python-dotenv
 google-generativeai
+SpeechRecognition
+gTTS
+pydub
