@@ -4,9 +4,9 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 from gtts import gTTS
 import io
-import base64
 import time
 from audio_recorder_streamlit import audio_recorder
+import hashlib
 
 # === Load environment ===
 load_dotenv()
@@ -23,69 +23,101 @@ st.title("🎙️ Real-time Voice Chat with Gemini")
 # Initialize session state
 if 'processing' not in st.session_state:
     st.session_state.processing = False
-if 'last_audio' not in st.session_state:
-    st.session_state.last_audio = None
+if 'last_audio_hash' not in st.session_state:
+    st.session_state.last_audio_hash = None
+
+def get_audio_hash(audio_bytes):
+    return hashlib.md5(audio_bytes).hexdigest()
 
 # Audio recorder component
-st.write("Click the microphone to record your question (5 seconds max):")
-audio_bytes = audio_recorder(pause_threshold=5.0, sample_rate=44100)
+st.write("Press and hold to record your question (max 10 seconds):")
+audio_bytes = audio_recorder(
+    pause_threshold=10.0,
+    sample_rate=44100,
+    text="Hold to Talk",
+    recording_color="#e8b62c",
+    neutral_color="#6aa36f",
+    icon_name="microphone",
+    icon_size="2x",
+)
 
 # Process audio when new recording is available
-if audio_bytes and audio_bytes != st.session_state.last_audio and not st.session_state.processing:
-    st.session_state.processing = True
-    st.session_state.last_audio = audio_bytes
+if audio_bytes and not st.session_state.processing:
+    current_hash = get_audio_hash(audio_bytes)
     
-    try:
-        # Display audio player
-        st.audio(audio_bytes, format="audio/wav")
+    if current_hash != st.session_state.last_audio_hash:
+        st.session_state.processing = True
+        st.session_state.last_audio_hash = current_hash
         
-        # Save to temporary file
-        with open("temp_audio.wav", "wb") as f:
-            f.write(audio_bytes)
-        
-        # Transcribe using Gemini's speech-to-text
-        with st.spinner("🔊 Transcribing your voice..."):
-            audio_file = {"mime_type": "audio/wav", "file_path": "temp_audio.wav"}
-            response = gemini_model.generate_content(["Transcribe this audio:", audio_file])
-            transcription = response.text
-            st.write(f"**You said:** {transcription}")
+        try:
+            # Create a unique temp file path
+            temp_filename = f"temp_audio_{int(time.time())}.wav"
             
-            # Generate response
-            with st.spinner("🧠 Generating response..."):
-                chat_response = gemini_model.generate_content(transcription)
-                answer = chat_response.text
-                st.write(f"**Gemini:** {answer}")
-                
-                # Convert response to speech
-                with st.spinner("🗣️ Generating voice response..."):
-                    tts = gTTS(answer, lang='en')
-                    audio_fp = io.BytesIO()
-                    tts.write_to_fp(audio_fp)
-                    audio_fp.seek(0)
-                    st.audio(audio_fp, format='audio/mp3')
+            # Save audio to file
+            with open(temp_filename, "wb") as f:
+                f.write(audio_bytes)
+            
+            # Display audio player
+            st.audio(audio_bytes, format="audio/wav")
+            
+            # Transcribe using Gemini's speech-to-text
+            with st.spinner("🔊 Processing your voice..."):
+                try:
+                    audio_file = {"mime_type": "audio/wav", "file_path": temp_filename}
+                    response = gemini_model.generate_content(["Transcribe this audio:", audio_file])
+                    transcription = response.text
+                    st.write(f"**You said:** {transcription}")
                     
-    except Exception as e:
-        st.error(f"Error processing audio: {str(e)}")
-    finally:
-        if os.path.exists("temp_audio.wav"):
-            os.remove("temp_audio.wav")
-        st.session_state.processing = False
-        st.rerun()
+                    # Generate response
+                    with st.spinner("🧠 Thinking..."):
+                        chat_response = gemini_model.generate_content(transcription)
+                        answer = chat_response.text
+                        st.write(f"**Gemini:** {answer}")
+                        
+                        # Convert response to speech
+                        with st.spinner("🗣️ Preparing voice response..."):
+                            tts = gTTS(answer, lang='en')
+                            audio_fp = io.BytesIO()
+                            tts.write_to_fp(audio_fp)
+                            audio_fp.seek(0)
+                            st.audio(audio_fp, format='audio/mp3')
+                except Exception as e:
+                    st.error(f"Error processing with Gemini: {str(e)}")
+        except Exception as e:
+            st.error(f"Error handling audio file: {str(e)}")
+        finally:
+            # Clean up temp file
+            try:
+                if os.path.exists(temp_filename):
+                    os.remove(temp_filename)
+            except:
+                pass
+            st.session_state.processing = False
 
 # Text fallback
 st.write("---")
-text_input = st.text_input("Or type your question here:")
+st.write("Alternatively, type your question below:")
+text_input = st.text_input("Text input")
 if text_input and not st.session_state.processing:
-    with st.spinner("🧠 Generating response..."):
+    with st.spinner("🧠 Thinking..."):
         response = gemini_model.generate_content(text_input)
         answer = response.text
         
         st.write(f"**You asked:** {text_input}")
         st.write(f"**Gemini:** {answer}")
         
-        with st.spinner("🗣️ Generating voice response..."):
+        with st.spinner("🗣️ Preparing voice response..."):
             tts = gTTS(answer, lang='en')
             audio_fp = io.BytesIO()
             tts.write_to_fp(audio_fp)
             audio_fp.seek(0)
             st.audio(audio_fp, format='audio/mp3')
+
+# Add some troubleshooting info
+st.sidebar.markdown("""
+### Troubleshooting:
+1. Allow microphone access when prompted
+2. Speak clearly into your microphone
+3. Hold the button while speaking
+4. Release to send your question
+""")
