@@ -7,40 +7,144 @@ import io
 import hashlib
 from tempfile import NamedTemporaryFile
 from audio_recorder_streamlit import audio_recorder
+import time
 
 # === Setup ===
 load_dotenv()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel("gemini-1.5-flash")
 
-# === App UI ===
-st.set_page_config(page_title="🎙️ Gemini Voice Assistant", page_icon="🎙️")
+# === Custom CSS for Beautiful UI ===
+st.markdown("""
+<style>
+    /* Main container */
+    .stApp {
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    }
+    
+    /* Chat bubbles */
+    .user-message {
+        background-color: #4a8cff;
+        color: white;
+        border-radius: 18px 18px 0 18px;
+        padding: 12px 16px;
+        margin: 8px 0;
+        max-width: 80%;
+        margin-left: auto;
+    }
+    
+    .bot-message {
+        background-color: #ffffff;
+        color: #333;
+        border-radius: 18px 18px 18px 0;
+        padding: 12px 16px;
+        margin: 8px 0;
+        max-width: 80%;
+        margin-right: auto;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    /* Microphone button */
+    .mic-button {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        border-radius: 50%;
+        width: 60px;
+        height: 60px;
+        font-size: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        transition: all 0.3s;
+        margin: 0 auto;
+    }
+    
+    .mic-button:active {
+        transform: scale(0.95);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    
+    /* Status indicators */
+    .status-box {
+        background: rgba(255,255,255,0.9);
+        border-radius: 10px;
+        padding: 12px;
+        margin: 10px 0;
+        text-align: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# === App Header ===
 st.title("🎙️ Gemini Voice Assistant")
-st.caption("Speak naturally and get intelligent voice responses")
+st.markdown("""
+<div style="text-align: center; margin-bottom: 20px;">
+    <p style="color: #666; font-size: 16px;">Hold the microphone button to speak, release to send</p>
+</div>
+""", unsafe_allow_html=True)
 
 # === Session State ===
 if 'convo' not in st.session_state:
     st.session_state.convo = []
 if 'processing' not in st.session_state:
     st.session_state.processing = False
+if 'recording' not in st.session_state:
+    st.session_state.recording = False
 
 # === Conversation History ===
 for exchange in st.session_state.convo:
-    role = "👤 You" if exchange['role'] == 'user' else "🤖 Gemini"
-    st.chat_message(role).write(exchange['content'])
-    if exchange.get('audio'):
-        st.audio(exchange['audio'], format='audio/mp3')
+    if exchange['role'] == 'user':
+        st.markdown(f"""
+        <div style="display: flex; justify-content: flex-end;">
+            <div class="user-message">
+                {exchange['content']}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div style="display: flex; justify-content: flex-start;">
+            <div class="bot-message">
+                {exchange['content']}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        if exchange.get('audio'):
+            st.audio(exchange['audio'], format='audio/mp3')
 
 # === Voice Recording ===
-audio_bytes = audio_recorder(
-    pause_threshold=8.0,
-    sample_rate=44100,
-    text="Hold to speak",
-    recording_color="#FF0000",
-    neutral_color="#00AAFF",
-    icon_name="mic",
-    icon_size="2x",
-)
+col1, col2, col3 = st.columns([1,2,1])
+with col2:
+    audio_bytes = audio_recorder(
+        pause_threshold=5.0,
+        sample_rate=44100,
+        energy_threshold=(-1.0, 1.0),
+        key="mic_recorder",
+        text="",
+        recording_color="#ff4b4b",
+        neutral_color="#4b8df8",
+        icon_name="microphone",
+        icon_size="2x",
+        format="webm"
+    )
+
+# Visual feedback for recording state
+if audio_bytes:
+    st.session_state.recording = True
+else:
+    if st.session_state.recording:
+        st.session_state.recording = False
+        st.rerun()
+
+if st.session_state.recording:
+    st.markdown("""
+    <div class="status-box">
+        <p style="color: #ff4b4b; font-weight: bold;">🎤 Recording... Speak now</p>
+    </div>
+    """, unsafe_allow_html=True)
 
 # === Audio Processing ===
 def process_audio(audio_data):
@@ -51,7 +155,7 @@ def process_audio(audio_data):
             tmp_path = tmp.name
         
         audio_file = genai.upload_file(tmp_path, mime_type="audio/wav")
-        response = model.generate_content(["Transcribe this:", audio_file])
+        response = model.generate_content(["Transcribe this audio:", audio_file])
         return response.text
     finally:
         if 'tmp_path' in locals() and os.path.exists(tmp_path):
@@ -59,7 +163,6 @@ def process_audio(audio_data):
         if 'audio_file' in locals():
             genai.delete_file(audio_file.name)
 
-# === Text-to-Speech ===
 def speak(text):
     """Convert text to speech"""
     tts = gTTS(text, lang='en')
@@ -72,46 +175,71 @@ if audio_bytes and not st.session_state.processing:
     st.session_state.processing = True
     
     try:
-        # Show recording
-        st.audio(audio_bytes, format="audio/wav")
+        # Show recording status
+        with st.empty():
+            st.markdown("""
+            <div class="status-box">
+                <p style="color: #4b8df8; font-weight: bold;">🔄 Processing your voice...</p>
+            </div>
+            """, unsafe_allow_html=True)
+            time.sleep(1)
         
         # Transcribe
-        with st.spinner("🔄 Processing your voice..."):
-            user_text = process_audio(audio_bytes)
-            if user_text:
-                st.session_state.convo.append({'role': 'user', 'content': user_text})
-                
-                # Get response
-                with st.spinner("💭 Thinking..."):
-                    gemini_response = model.generate_content(user_text)
-                    response_text = gemini_response.text
-                    response_audio = speak(response_text)
-                    
-                    st.session_state.convo.append({
-                        'role': 'assistant',
-                        'content': response_text,
-                        'audio': response_audio
-                    })
-                    
-                    st.rerun()
+        user_text = process_audio(audio_bytes)
+        if user_text:
+            st.session_state.convo.append({'role': 'user', 'content': user_text})
+            
+            # Get response
+            with st.empty():
+                st.markdown("""
+                <div class="status-box">
+                    <p style="color: #4b8df8; font-weight: bold;">💭 Thinking...</p>
+                </div>
+                """, unsafe_allow_html=True)
+                time.sleep(1)
+            
+            gemini_response = model.generate_content(user_text)
+            response_text = gemini_response.text
+            response_audio = speak(response_text)
+            
+            st.session_state.convo.append({
+                'role': 'assistant',
+                'content': response_text,
+                'audio': response_audio
+            })
+            
+            st.rerun()
     except Exception as e:
         st.error(f"Error: {str(e)}")
     finally:
         st.session_state.processing = False
 
 # === Text Input Fallback ===
-if prompt := st.chat_input("Or type your message..."):
+st.markdown("""
+<div style="text-align: center; margin: 20px 0;">
+    <p style="color: #666;">Or type your message below</p>
+</div>
+""", unsafe_allow_html=True)
+
+if prompt := st.chat_input("Type your message here..."):
     st.session_state.convo.append({'role': 'user', 'content': prompt})
     
-    with st.spinner("💭 Thinking..."):
-        response = model.generate_content(prompt)
-        response_text = response.text
-        response_audio = speak(response_text)
-        
-        st.session_state.convo.append({
-            'role': 'assistant',
-            'content': response_text,
-            'audio': response_audio
-        })
-        
-        st.rerun()
+    with st.empty():
+        st.markdown("""
+        <div class="status-box">
+            <p style="color: #4b8df8; font-weight: bold;">💭 Thinking...</p>
+        </div>
+        """, unsafe_allow_html=True)
+        time.sleep(1)
+    
+    response = model.generate_content(prompt)
+    response_text = response.text
+    response_audio = speak(response_text)
+    
+    st.session_state.convo.append({
+        'role': 'assistant',
+        'content': response_text,
+        'audio': response_audio
+    })
+    
+    st.rerun()
