@@ -3,6 +3,6 @@ openai
 speechrecognition
 pyttsx3
 python-dotenv
-generativeai
+google-generativeai
 gTTS
 os-sys
