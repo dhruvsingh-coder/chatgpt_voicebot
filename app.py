@@ -4,8 +4,9 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 from gtts import gTTS
 import io
-from audio_recorder_streamlit import audio_recorder
+import hashlib
 from tempfile import NamedTemporaryFile
+from audio_recorder_streamlit import audio_recorder
 
 # Must be first command
 st.set_page_config(page_title="Voice Assistant", page_icon="🎙️")
@@ -19,9 +20,13 @@ model = genai.GenerativeModel("gemini-1.5-flash")
 st.title("🎙️ Voice Assistant")
 st.write("Press to record your question (hold for 5 seconds)")
 
-# Initialize conversation
+# Initialize session state
 if 'conversation' not in st.session_state:
     st.session_state.conversation = []
+if 'last_audio_hash' not in st.session_state:
+    st.session_state.last_audio_hash = None
+if 'processing' not in st.session_state:
+    st.session_state.processing = False
 
 # Display chat history
 for msg in st.session_state.conversation:
@@ -31,6 +36,9 @@ for msg in st.session_state.conversation:
         st.chat_message("assistant").write(msg['content'])
         if 'audio' in msg:
             st.audio(msg['audio'], format='audio/mp3')
+
+def get_audio_hash(audio_bytes):
+    return hashlib.md5(audio_bytes).hexdigest()
 
 # Audio recorder
 audio_bytes = audio_recorder(
@@ -57,36 +65,52 @@ def text_to_speech(text):
 
 # Handle new audio
 if audio_bytes and len(audio_bytes) > 0:
-    with st.spinner("Processing..."):
-        try:
-            # Transcribe
-            text = process_audio(audio_bytes)
-            st.session_state.conversation.append({'role': 'user', 'content': text})
-            
-            # Get response
-            response = model.generate_content(text)
-            response_text = response.text
-            response_audio = text_to_speech(response_text)
-            
-            st.session_state.conversation.append({
-                'role': 'assistant', 
-                'content': response_text,
-                'audio': response_audio
-            })
-            st.rerun()
-            
-        except Exception as e:
-            st.error(f"Error: {str(e)}")
+    current_hash = get_audio_hash(audio_bytes)
+    
+    # Only process if this is new audio and not currently processing
+    if current_hash != st.session_state.last_audio_hash and not st.session_state.processing:
+        st.session_state.processing = True
+        st.session_state.last_audio_hash = current_hash
+        
+        with st.spinner("Processing..."):
+            try:
+                # Transcribe
+                text = process_audio(audio_bytes)
+                st.session_state.conversation.append({'role': 'user', 'content': text})
+                
+                # Get response
+                response = model.generate_content(text)
+                response_text = response.text
+                response_audio = text_to_speech(response_text)
+                
+                st.session_state.conversation.append({
+                    'role': 'assistant', 
+                    'content': response_text,
+                    'audio': response_audio
+                })
+                
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+            finally:
+                st.session_state.processing = False
+                st.rerun()
 
 # Text input fallback
 if prompt := st.chat_input("Or type your question..."):
-    with st.spinner("Thinking..."):
-        response = model.generate_content(prompt)
-        response_text = response.text
-        response_audio = text_to_speech(response_text)
-        
-        st.session_state.conversation.extend([
-            {'role': 'user', 'content': prompt},
-            {'role': 'assistant', 'content': response_text, 'audio': response_audio}
-        ])
-        st.rerun()
+    if not st.session_state.processing:
+        st.session_state.processing = True
+        with st.spinner("Thinking..."):
+            try:
+                response = model.generate_content(prompt)
+                response_text = response.text
+                response_audio = text_to_speech(response_text)
+                
+                st.session_state.conversation.extend([
+                    {'role': 'user', 'content': prompt},
+                    {'role': 'assistant', 'content': response_text, 'audio': response_audio}
+                ])
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+            finally:
+                st.session_state.processing = False
+                st.rerun()
