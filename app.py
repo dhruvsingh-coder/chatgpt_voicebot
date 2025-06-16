@@ -1,50 +1,53 @@
-import os
 import streamlit as st
-from dotenv import load_dotenv
-import google.generativeai as genai
-from gtts import gTTS
+from streamlit_webrtc import webrtc_streamer
+import av
+import os
 import tempfile
 import speech_recognition as sr
+from gtts import gTTS
+from dotenv import load_dotenv
+import google.generativeai as genai
 
-# Load environment variables
+# Load Gemini key
 load_dotenv()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-gemini = genai.GenerativeModel("gemini-2.0-flash")
+gemini = genai.GenerativeModel("gemini-1.5-flash")
 
-st.set_page_config(page_title="🎙️ Fast Gemini Voice Bot")
-st.title("🎙️ Fast Gemini Voice Bot")
+st.set_page_config(page_title="🎙️ Gemini Voice Bot")
+st.title("🎙️ Real-Time Gemini Voice Bot")
 
-# 1️⃣ Record audio using Streamlit's audio recorder
-audio_data = st.audio_recorder("Record your voice")
+# Recorder class
+class AudioProcessor:
+    def __init__(self):
+        self.recognizer = sr.Recognizer()
 
-if audio_data is not None:
-    # Save recording to temp file
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-        tmp.write(audio_data)
-        tmp_path = tmp.name
+    def recv(self, frame: av.AudioFrame):
+        wav_path = "/tmp/audio.wav"
+        with open(wav_path, "wb") as f:
+            f.write(frame.to_ndarray().tobytes())
 
-    st.success("Recording saved, transcribing...")
-
-    # 2️⃣ Transcribe using SpeechRecognition
-    recognizer = sr.Recognizer()
-    with sr.AudioFile(tmp_path) as source:
-        audio = recognizer.record(source)
         try:
-            text = recognizer.recognize_google(audio)
-            st.write(f"**You said:** {text}")
+            with sr.AudioFile(wav_path) as source:
+                audio = self.recognizer.record(source)
+                text = self.recognizer.recognize_google(audio)
+                st.session_state.transcribed_text = text
+        except Exception as e:
+            st.session_state.transcribed_text = f"[Error] {str(e)}"
 
-            # 3️⃣ Get Gemini response
-            response = gemini.generate_content(text)
-            answer = response.text
-            st.write(f"**Gemini:** {answer}")
+# Start recording
+webrtc_ctx = webrtc_streamer(key="example", audio_processor_factory=AudioProcessor, media_stream_constraints={"audio": True, "video": False})
 
-            # 4️⃣ TTS
+if "transcribed_text" in st.session_state:
+    st.write("You said:", st.session_state.transcribed_text)
+
+    if st.button("🎤 Generate Response"):
+        with st.spinner("Thinking..."):
+            gemini_response = gemini.generate_content(st.session_state.transcribed_text)
+            answer = gemini_response.text
+            st.write("🤖 Gemini says:", answer)
+
+            # TTS
             tts = gTTS(answer)
-            tts_file = "response.mp3"
-            tts.save(tts_file)
-            st.audio(tts_file, format="audio/mp3")
-
-        except sr.UnknownValueError:
-            st.error("Could not understand audio.")
-        except sr.RequestError as e:
-            st.error(f"API error: {e}")
+            tts_path = "response.mp3"
+            tts.save(tts_path)
+            st.audio(tts_path, format="audio/mp3")
