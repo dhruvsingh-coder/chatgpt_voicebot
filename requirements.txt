@@ -1,7 +1,13 @@
-streamlit
-streamlit-webrtc
+# --- Core ---
+streamlit>=1.34
+streamlit-audio-recorder>=0.0.2
+
+# Speech recognition & TTS
 speechrecognition
+gTTS
+
+# Gemini
 google-generativeai
-gtts
+
+# .env support
 python-dotenv
-streamlit-audio-recorder
