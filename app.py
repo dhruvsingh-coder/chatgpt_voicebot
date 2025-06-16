@@ -8,7 +8,7 @@ import speech_recognition as sr
 from gtts import gTTS
 from streamlit_webrtc import webrtc_streamer, AudioProcessorBase
 
-# Load .env
+# === Load environment ===
 load_dotenv()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 gemini_model = genai.GenerativeModel("gemini-2.0-flash")
@@ -16,10 +16,14 @@ gemini_model = genai.GenerativeModel("gemini-2.0-flash")
 st.set_page_config(page_title="🎙️ Gemini Voice Bot")
 st.title("🎙️ Gemini Voice Bot 🤖🎤")
 
-st.write("1️⃣ Click **Start**  
+# ✅ FIXED multiline text using triple quotes
+st.write("""
+1️⃣ Click **Start**  
 2️⃣ Speak into mic  
 3️⃣ Click **Stop**  
-4️⃣ Wait for Gemini's answer!")
+4️⃣ Click **Process & Send to Gemini**  
+5️⃣ Hear Gemini's answer!
+""")
 
 # === WebRTC audio recorder ===
 
@@ -45,12 +49,13 @@ ctx = webrtc_streamer(
 if ctx.state.audio_processor:
     if st.button("🎙️ Process & Send to Gemini"):
         audio_bytes = ctx.state.audio_processor.get_audio()
+        
         # Save raw PCM as WAV
         temp_wav = "temp.wav"
         with open(temp_wav, "wb") as f:
             f.write(audio_bytes)
 
-        # Recognize speech
+        # Use SpeechRecognition to transcribe
         recognizer = sr.Recognizer()
         with sr.AudioFile(temp_wav) as source:
             audio_data = recognizer.record(source)
