@@ -6,6 +6,7 @@ from gtts import gTTS
 import io
 import speech_recognition as sr
 from tempfile import NamedTemporaryFile
+import threading
 
 # === Load environment ===
 load_dotenv()
@@ -19,107 +20,91 @@ gemini_model = genai.GenerativeModel("gemini-1.5-flash")
 st.set_page_config(page_title="🎙️ Gemini Voice Bot", page_icon="🎙️")
 st.title("🎙️ Gemini Voice Bot")
 
-# === Audio Recording Options ===
-recording_option = st.radio(
-    "Choose input method:",
-    ("Use Microphone (Browser)", "Upload Audio File", "Text Input"),
-    horizontal=True
-)
+# Initialize session state
+if 'recording' not in st.session_state:
+    st.session_state.recording = False
+if 'audio_bytes' not in st.session_state:
+    st.session_state.audio_bytes = None
 
-# === Process Different Input Types ===
-question = ""
+# === Audio Recording ===
+def record_audio():
+    recognizer = sr.Recognizer()
+    microphone = sr.Microphone()
+    
+    st.session_state.recording = True
+    with microphone as source:
+        st.info("Recording... Speak now (5 seconds max)")
+        audio = recognizer.listen(source, timeout=5)
+        st.session_state.audio_bytes = audio.get_wav_data()
+        st.session_state.recording = False
 
-if recording_option == "Use Microphone (Browser)":
+# Recording controls
+col1, col2 = st.columns(2)
+with col1:
+    if st.button("🎤 Start Recording") and not st.session_state.recording:
+        threading.Thread(target=record_audio).start()
+
+with col2:
+    if st.button("⏹️ Stop Recording") and st.session_state.recording:
+        st.session_state.recording = False
+
+# Show recording status
+if st.session_state.recording:
+    st.warning("Recording in progress...")
+    
+# Process recorded audio
+if st.session_state.audio_bytes and not st.session_state.recording:
+    recognizer = sr.Recognizer()
+    with NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
+        temp_audio.write(st.session_state.audio_bytes)
+        temp_audio_path = temp_audio.name
+    
     try:
-        from streamlit_webrtc import webrtc_streamer, WebRtcMode, AudioProcessorBase
-        import av
-        
-        st.warning("Note: Microphone access might require permissions. If it fails, try another method.")
-        
-        class AudioRecorder(AudioProcessorBase):
-            def __init__(self):
-                self.audio_bytes = bytearray()
-
-            def recv(self, frame: av.AudioFrame) -> av.AudioFrame:
-                self.audio_bytes.extend(frame.to_ndarray().tobytes())
-                return frame
-
-        webrtc_ctx = webrtc_streamer(
-            key="speech-to-text",
-            mode=WebRtcMode.SENDONLY,
-            audio_processor_factory=AudioRecorder,
-            rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-            media_stream_constraints={"audio": True},
-        )
-
-        if webrtc_ctx and webrtc_ctx.audio_processor:
-            recognizer = sr.Recognizer()
-            audio_bytes = bytes(webrtc_ctx.audio_processor.audio_bytes)
+        with sr.AudioFile(temp_audio_path) as source:
+            audio_data = recognizer.record(source)
+            question = recognizer.recognize_google(audio_data)
+            st.success(f"🎤 You said: {question}")
             
-            if len(audio_bytes) > 0:
-                with NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
-                    temp_audio.write(audio_bytes)
-                    temp_audio_path = temp_audio.name
+            # Generate response
+            with st.spinner("Generating response..."):
+                response = gemini_model.generate_content(question)
+                answer = response.text
                 
-                try:
-                    with sr.AudioFile(temp_audio_path) as source:
-                        audio_data = recognizer.record(source)
-                        question = recognizer.recognize_google(audio_data)
-                        st.success(f"🎤 You said: {question}")
-                except sr.UnknownValueError:
-                    st.error("Could not understand audio. Please try again.")
-                except sr.RequestError as e:
-                    st.error(f"Speech recognition service error: {e}")
-                finally:
-                    if os.path.exists(temp_audio_path):
-                        os.unlink(temp_audio_path)
+                st.subheader("🤖 Gemini Response:")
+                st.write(answer)
+                
+                # Text-to-Speech
+                with st.spinner("Generating audio..."):
+                    tts = gTTS(answer, lang='en')
+                    audio_fp = io.BytesIO()
+                    tts.write_to_fp(audio_fp)
+                    audio_fp.seek(0)
+                    st.audio(audio_fp, format="audio/mp3")
+                    
+    except sr.UnknownValueError:
+        st.error("Could not understand audio. Please try again.")
+    except sr.RequestError as e:
+        st.error(f"Speech recognition service error: {e}")
+    finally:
+        if os.path.exists(temp_audio_path):
+            os.unlink(temp_audio_path)
+        st.session_state.audio_bytes = None
 
-    except Exception as e:
-        st.error(f"Microphone access failed: {str(e)}")
-        st.info("Please try the upload or text input options below.")
-
-elif recording_option == "Upload Audio File":
-    audio_file = st.file_uploader("Upload audio file (WAV/MP3):", type=["wav", "mp3"])
-    if audio_file:
-        recognizer = sr.Recognizer()
-        with NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
-            temp_audio.write(audio_file.read())
-            temp_audio_path = temp_audio.name
-        
-        try:
-            with sr.AudioFile(temp_audio_path) as source:
-                audio_data = recognizer.record(source)
-                question = recognizer.recognize_google(audio_data)
-                st.success(f"🎤 You said: {question}")
-        except sr.UnknownValueError:
-            st.error("Could not understand audio. Please try a clearer recording.")
-        except sr.RequestError as e:
-            st.error(f"Speech recognition service error: {e}")
-        finally:
-            if os.path.exists(temp_audio_path):
-                os.unlink(temp_audio_path)
-
-else:  # Text Input
-    question = st.text_input("Enter your question:")
-
-# === Generate and Speak Response ===
-if question:
+# Text fallback
+st.write("---")
+text_input = st.text_input("Or type your question here:")
+if text_input:
     with st.spinner("Generating response..."):
-        try:
-            response = gemini_model.generate_content(question)
-            answer = response.text
-            
-            st.subheader("🤖 Gemini Response:")
-            st.write(answer)
-            
-            # Text-to-Speech
-            with st.spinner("Generating audio..."):
-                tts = gTTS(answer, lang='en')
-                audio_fp = io.BytesIO()
-                tts.write_to_fp(audio_fp)
-                audio_fp.seek(0)
-                
-                st.audio(audio_fp, format="audio/mp3")
-                
-        except Exception as e:
-            st.error(f"Error generating response: {e}")
+        response = gemini_model.generate_content(text_input)
+        answer = response.text
+        
+        st.subheader("🤖 Gemini Response:")
+        st.write(answer)
+        
+        # Text-to-Speech
+        with st.spinner("Generating audio..."):
+            tts = gTTS(answer, lang='en')
+            audio_fp = io.BytesIO()
+            tts.write_to_fp(audio_fp)
+            audio_fp.seek(0)
+            st.audio(audio_fp, format="audio/mp3")
