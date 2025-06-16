@@ -4,8 +4,8 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 from gtts import gTTS
 import io
-import speech_recognition as sr
-from tempfile import NamedTemporaryFile
+import base64
+import time
 
 # === Load environment ===
 load_dotenv()
@@ -16,62 +16,123 @@ genai.configure(api_key=gemini_api_key)
 gemini_model = genai.GenerativeModel("gemini-1.5-flash")
 
 # App UI
-st.set_page_config(page_title="🎙️ Gemini Voice Bot", page_icon="🎙️")
-st.title("🎙️ Gemini Voice Bot")
+st.set_page_config(page_title="🎙️ Real-time Voice Chat", page_icon="🎙️")
+st.title("🎙️ Real-time Voice Chat with Gemini")
 
-# === Audio Input Options ===
-input_method = st.radio(
-    "Choose input method:",
-    ("Upload Audio", "Text Input"),
-    horizontal=True
-)
+# Custom HTML/JS for browser-based recording
+recording_js = """
+<script>
+let mediaRecorder;
+let audioChunks = [];
 
-question = ""
-
-if input_method == "Upload Audio":
-    audio_file = st.file_uploader("Upload audio file (WAV/MP3):", type=["wav", "mp3"])
-    if audio_file:
-        recognizer = sr.Recognizer()
-        with NamedTemporaryFile(suffix=".wav", delete=False) as temp_audio:
-            temp_audio.write(audio_file.read())
-            temp_audio_path = temp_audio.name
-        
-        try:
-            with sr.AudioFile(temp_audio_path) as source:
-                audio_data = recognizer.record(source)
-                question = recognizer.recognize_google(audio_data)
-                st.success(f"🎤 You said: {question}")
-        except sr.UnknownValueError:
-            st.error("Could not understand audio. Please try a clearer recording.")
-        except sr.RequestError as e:
-            st.error(f"Speech recognition service error: {e}")
-        except Exception as e:
-            st.error(f"Error processing audio: {e}")
-        finally:
-            if os.path.exists(temp_audio_path):
-                os.unlink(temp_audio_path)
-else:
-    question = st.text_input("Enter your question:")
-
-# === Generate and Speak Response ===
-if question:
-    with st.spinner("Generating response..."):
-        try:
-            response = gemini_model.generate_content(question)
-            answer = response.text
+function startRecording() {
+    navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(stream => {
+            mediaRecorder = new MediaRecorder(stream);
+            mediaRecorder.start();
             
-            st.subheader("🤖 Gemini Response:")
-            st.write(answer)
+            mediaRecorder.ondataavailable = e => {
+                audioChunks.push(e.data);
+            };
             
-            # Text-to-Speech
-            with st.spinner("Generating audio..."):
-                tts = gTTS(answer, lang='en')
-                audio_fp = io.BytesIO()
-                tts.write_to_fp(audio_fp)
-                audio_fp.seek(0)
-                st.audio(audio_fp, format="audio/mp3")
+            mediaRecorder.onstop = async () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                audioChunks = [];
                 
-        except Exception as e:
-            st.error(f"Error generating response: {e}")
+                const reader = new FileReader();
+                reader.readAsDataURL(audioBlob);
+                reader.onloadend = () => {
+                    const base64data = reader.result.split(',')[1];
+                    window.parent.postMessage({
+                        type: 'audioData',
+                        data: base64data
+                    }, '*');
+                };
+            };
+            
+            document.getElementById('status').textContent = "Recording...";
+        })
+        .catch(err => {
+            console.error("Error accessing microphone:", err);
+            document.getElementById('status').textContent = "Microphone access denied";
+        });
+}
 
-st.warning("Note: Microphone recording is not supported in Streamlit Cloud. Please upload audio files or use text input.")
+function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+        document.getElementById('status').textContent = "Processing...";
+    }
+}
+</script>
+"""
+
+# Display recording interface
+st.components.v1.html(recording_js + """
+<div style="text-align: center;">
+    <button onclick="startRecording()" style="padding: 10px 20px; margin: 10px;">Start Recording</button>
+    <button onclick="stopRecording()" style="padding: 10px 20px; margin: 10px;">Stop Recording</button>
+    <p id="status">Ready to record</p>
+</div>
+""", height=150)
+
+# Audio processing
+if 'audio_data' not in st.session_state:
+    st.session_state.audio_data = None
+
+# Handle audio data from JS
+def handle_audio_data(data):
+    st.session_state.audio_data = data
+    st.rerun()
+
+# Register callback for JS messages
+st.components.v1.html("""
+<script>
+window.addEventListener('message', (event) => {
+    if (event.data.type === 'audioData') {
+        window.parent.streamlitApi.sendMessage(event.data);
+    }
+});
+</script>
+""", height=0)
+
+# Process audio when received
+if st.session_state.audio_data:
+    try:
+        # Convert base64 to audio file
+        audio_bytes = base64.b64decode(st.session_state.audio_data)
+        
+        # Display audio player
+        st.audio(audio_bytes, format='audio/wav')
+        
+        # Transcribe using Gemini's speech-to-text
+        with st.spinner("Transcribing..."):
+            audio_file = {"mime_type": "audio/wav", "data": audio_bytes}
+            response = gemini_model.generate_content(["Transcribe this audio:", audio_file])
+            transcription = response.text
+            st.write(f"**You said:** {transcription}")
+            
+            # Generate response
+            with st.spinner("Generating response..."):
+                chat_response = gemini_model.generate_content(transcription)
+                answer = chat_response.text
+                st.write(f"**Gemini:** {answer}")
+                
+                # Convert response to speech
+                with st.spinner("Generating voice..."):
+                    tts = gTTS(answer, lang='en')
+                    audio_fp = io.BytesIO()
+                    tts.write_to_fp(audio_fp)
+                    audio_fp.seek(0)
+                    st.audio(audio_fp, format='audio/mp3')
+                    
+    except Exception as e:
+        st.error(f"Error processing audio: {str(e)}")
+    finally:
+        st.session_state.audio_data = None
+
+# Handle JS messages
+if st.rerun():
+    if 'message' in st.session_state:
+        if st.session_state.message.get('type') == 'audioData':
+            handle_audio_data(st.session_state.message['data'])
