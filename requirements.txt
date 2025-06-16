@@ -1,0 +1,8 @@
+streamlit
+openai
+speechrecognition
+pyttsx3
+python-dotenv
+generativeai
+gTTS
+os-sys
