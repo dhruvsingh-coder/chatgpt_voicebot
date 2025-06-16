@@ -1,7 +1,6 @@
 import os
 import base64
 import streamlit as st
-from streamlit_mic_recorder import mic_recorder
 import speech_recognition as sr
 from gtts import gTTS
 from dotenv import load_dotenv
@@ -18,64 +17,31 @@ gemini = genai.GenerativeModel("gemini-1.5-flash")
 # Streamlit UI Config
 # ----------------------------
 st.set_page_config(page_title="🎙️ Gemini Voice Bot")
-st.title("🎙️ Real-Time Gemini Voice Bot")
+st.title("🎙️ Gemini Voice Bot (Stable Upload Version)")
 
 # ----------------------------
-# Record audio
+# Record with native browser recorder
 # ----------------------------
-audio = mic_recorder(
-    start_prompt="🎙️ Start recording",
-    stop_prompt="⏹️ Stop recording",
-    key="recorder"
-)
+st.write("🎤 Record your voice using your computer's recorder and upload the file below (WAV or MP3 recommended).")
 
-# Debug: show raw mic_recorder output
-st.write("DEBUG ➜ Raw audio output:", audio)
+audio_file = st.file_uploader("Upload your recorded voice here:", type=["wav", "mp3", "m4a"])
 
-# ----------------------------
-# If audio exists, process it
-# ----------------------------
-if audio:
-    st.success("✅ Audio recorded!")
-
-    # Safely handle possible keys
-    audio_data_url = None
-    if isinstance(audio, dict):
-        # Print keys to know what's inside
-        st.write("DEBUG ➜ Audio keys:", list(audio.keys()))
-        # Common candidates: 'audio_data', 'data', 'blob'
-        for candidate in ["audio_data", "data", "blob"]:
-            if candidate in audio:
-                audio_data_url = audio[candidate]
-                break
-    elif isinstance(audio, str):
-        audio_data_url = audio
-
-    # If still none, show error
-    if audio_data_url is None:
-        st.error("❌ Could not find base64 audio data. Check recorder output.")
-        st.stop()
-
-    # Decode base64 and save to wav
-    try:
-        audio_bytes = base64.b64decode(audio_data_url.split(",")[1])
-    except Exception as e:
-        st.error(f"❌ Error decoding audio: {e}")
-        st.stop()
-
-    wav_path = "temp_audio.wav"
-    with open(wav_path, "wb") as f:
-        f.write(audio_bytes)
+if audio_file is not None:
+    # Save uploaded audio to disk
+    audio_path = f"uploaded_audio.{audio_file.type.split('/')[-1]}"
+    with open(audio_path, "wb") as f:
+        f.write(audio_file.read())
+    st.audio(audio_path)
 
     # ----------------------------
-    # Transcribe audio
+    # Transcribe
     # ----------------------------
     recognizer = sr.Recognizer()
-    with sr.AudioFile(wav_path) as source:
+    with sr.AudioFile(audio_path) as source:
         audio_data = recognizer.record(source)
         try:
             text = recognizer.recognize_google(audio_data)
-            st.write("🗣️ You said:", text)
+            st.success(f"🗣️ You said: {text}")
         except Exception as e:
             st.error(f"❌ Speech Recognition Error: {e}")
             st.stop()
@@ -83,7 +49,7 @@ if audio:
     # ----------------------------
     # Generate Gemini response
     # ----------------------------
-    if st.button("🤖 Generate Response"):
+    if st.button("🤖 Generate Gemini Response"):
         with st.spinner("Thinking..."):
             gemini_response = gemini.generate_content(text)
             answer = gemini_response.text
