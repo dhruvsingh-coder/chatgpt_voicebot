@@ -1,76 +1,63 @@
-import streamlit as st
-from st_mic_recorder import mic_recorder
 import os
-import base64
-from gtts import gTTS
-import tempfile
-import google.generativeai as genai
+import streamlit as st
 from dotenv import load_dotenv
+import google.generativeai as genai
+from gtts import gTTS
+import io
+
+# === Load environment ===
+load_dotenv()
+gemini_api_key = os.getenv("GEMINI_API_KEY")
+
+genai.configure(api_key=gemini_api_key)
+gemini_model = genai.GenerativeModel("gemini-2.0-flash")
+
+st.set_page_config(page_title="🎙️ Gemini Voice Bot")
+st.title("🎙️ Gemini Voice Bot")
+
+st.write(
+    "Upload an audio file (WAV/MP3) or record below (using Streamlit's recording widget if available)."
+)
+
+# === Upload audio ===
+audio_file = st.file_uploader("Upload your question (wav/mp3):", type=["wav", "mp3"])
+
+# === Optional: Text input as fallback ===
+text_input = st.text_input("Or type your question here:")
+
+# === Process audio ===
 import speech_recognition as sr
 
-# Load environment variables
-load_dotenv()
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-gemini = genai.GenerativeModel("gemini-2.0-flash")
+if audio_file is not None:
+    recognizer = sr.Recognizer()
+    with open("temp_audio.wav", "wb") as f:
+        f.write(audio_file.read())
 
-st.set_page_config(page_title="🎙️ Gemini Voice Bot (Cloud-Friendly)")
-st.title("🎙️ Gemini Voice Bot (Cloud)")
-
-# 1️⃣  Mic Recorder
-st.subheader("🎤 Record with your mic")
-audio = mic_recorder(start_prompt="Start Recording", stop_prompt="Stop Recording", key='mic')
-
-# 2️⃣  OR File Upload
-st.subheader("📁 Or upload a WAV or MP3")
-uploaded_file = st.file_uploader("Upload an audio file", type=['wav', 'mp3'])
-
-transcribed_text = ""
-
-# 3️⃣  Process audio input
-recognizer = sr.Recognizer()
-
-if audio is not None:
-    # decode base64 mic audio to bytes
-    audio_bytes = base64.b64decode(audio.split(",")[1])
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
-        tmp_file.write(audio_bytes)
-        tmp_file.flush()
-        audio_file_path = tmp_file.name
-
-    # transcribe
-    with sr.AudioFile(audio_file_path) as source:
-        recorded_audio = recognizer.record(source)
+    with sr.AudioFile("temp_audio.wav") as source:
+        audio_data = recognizer.record(source)
         try:
-            transcribed_text = recognizer.recognize_google(recorded_audio)
+            question = recognizer.recognize_google(audio_data)
+            st.write(f"**You said:** {question}")
         except Exception as e:
-            st.error(f"Transcription error: {e}")
+            st.error(f"Could not process audio: {e}")
+            question = ""
 
-elif uploaded_file is not None:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
-        tmp_file.write(uploaded_file.read())
-        tmp_file.flush()
-        audio_file_path = tmp_file.name
+elif text_input:
+    question = text_input
+else:
+    question = ""
 
-    with sr.AudioFile(audio_file_path) as source:
-        recorded_audio = recognizer.record(source)
-        try:
-            transcribed_text = recognizer.recognize_google(recorded_audio)
-        except Exception as e:
-            st.error(f"Transcription error: {e}")
+# === Generate answer ===
+if question:
+    response = gemini_model.generate_content(question)
+    answer = response.text
+    st.write(f"**Gemini:** {answer}")
 
-# 4️⃣  Show transcription and ask Gemini
-if transcribed_text:
-    st.write("✅ **You said:**", transcribed_text)
+    # === Text-to-Speech ===
+    tts = gTTS(answer)
+    mp3_fp = io.BytesIO()
+    tts.write_to_fp(mp3_fp)
+    mp3_fp.seek(0)
 
-    if st.button("✨ Ask Gemini"):
-        with st.spinner("Thinking..."):
-            response = gemini.generate_content(transcribed_text)
-            answer = response.text
-            st.write("🤖 **Gemini says:**", answer)
-
-            # Convert to TTS
-            tts = gTTS(answer)
-            tts_path = "gemini_response.mp3"
-            tts.save(tts_path)
-            st.audio(tts_path, format="audio/mp3")
+    st.audio(mp3_fp, format="audio/mp3")
 
