@@ -1,13 +1,12 @@
 import streamlit as st
-from streamlit_audio_recorder import audio_recorder
+from streamlit_mic_recorder import mic_recorder
+import os
 import speech_recognition as sr
-import io
 from gtts import gTTS
 from dotenv import load_dotenv
 import google.generativeai as genai
-import os
 
-# ✅ Load your .env key
+# Load API key
 load_dotenv()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 gemini = genai.GenerativeModel("gemini-1.5-flash")
@@ -16,37 +15,31 @@ st.set_page_config(page_title="🎙️ Gemini Voice Bot")
 st.title("🎙️ Real-Time Gemini Voice Bot")
 
 # Record audio
-audio_bytes = audio_recorder(text="Click to record", pause_threshold=2.0)
+audio = mic_recorder(start_prompt="Start recording", stop_prompt="Stop recording", key="recorder")
 
-if audio_bytes:
-    st.audio(audio_bytes, format="audio/wav")
-    st.success("Recording received. Transcribing...")
+if audio:
+    # Save to file
+    audio_file = "input.wav"
+    with open(audio_file, "wb") as f:
+        f.write(audio)
 
-    # Recognize
+    # Transcribe
     recognizer = sr.Recognizer()
-    with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
-        audio = recognizer.record(source)
+    with sr.AudioFile(audio_file) as source:
+        audio_data = recognizer.record(source)
         try:
-            text = recognizer.recognize_google(audio)
-            st.write("You said:", text)
-            st.session_state.transcribed_text = text
-        except Exception as e:
-            st.error(f"Could not transcribe: {e}")
+            text = recognizer.recognize_google(audio_data)
+            st.write("✅ **You said:**", text)
 
-if "transcribed_text" in st.session_state:
-    if st.button("🎤 Generate Gemini Response"):
-        with st.spinner("Gemini is thinking..."):
-            try:
-                gemini_response = gemini.generate_content(st.session_state.transcribed_text)
+            if st.button("🔮 Generate Response"):
+                gemini_response = gemini.generate_content(text)
                 answer = gemini_response.text
-                st.write("🤖 Gemini says:", answer)
+                st.write("🤖 **Gemini says:**", answer)
 
-                # TTS
                 tts = gTTS(answer)
-                audio_io = io.BytesIO()
-                tts.write_to_fp(audio_io)
-                audio_io.seek(0)
-                st.audio(audio_io, format="audio/mp3")
+                tts_path = "response.mp3"
+                tts.save(tts_path)
+                st.audio(tts_path, format="audio/mp3")
 
-            except Exception as e:
-                st.error(f"Error: {e}")
+        except Exception as e:
+            st.error(f"Error: {e}")
