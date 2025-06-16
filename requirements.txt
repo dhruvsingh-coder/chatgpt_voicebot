@@ -6,3 +6,4 @@ python-dotenv
 google-generativeai
 gTTS
 os-sys
+PyAudio
