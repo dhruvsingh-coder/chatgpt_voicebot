@@ -1,8 +1,6 @@
 streamlit
-python-dotenv
-google-generativeai
-gtts
 streamlit-webrtc
-pyaudio 
 SpeechRecognition
-pipwin
+google-generativeai
+gTTS
+python-dotenv
