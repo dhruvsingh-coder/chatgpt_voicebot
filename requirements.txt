@@ -4,3 +4,4 @@ speechrecognition
 google-generativeai
 gtts
 python-dotenv
+streamlit-audio-recorder
