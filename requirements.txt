@@ -1,4 +1,4 @@
-streamlit
+streamlit>=1.25
 git+https://github.com/stefanrmmr/st-audiorec.git
 google-generativeai
 SpeechRecognition
