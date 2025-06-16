@@ -44,26 +44,11 @@ st.markdown("""
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
     
-    /* Microphone button */
-    .mic-button {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border: none;
-        border-radius: 50%;
-        width: 60px;
-        height: 60px;
-        font-size: 24px;
+    /* Microphone button container */
+    .mic-container {
         display: flex;
-        align-items: center;
         justify-content: center;
-        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-        transition: all 0.3s;
-        margin: 0 auto;
-    }
-    
-    .mic-button:active {
-        transform: scale(0.95);
-        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        margin: 20px 0;
     }
     
     /* Status indicators */
@@ -116,20 +101,17 @@ for exchange in st.session_state.convo:
             st.audio(exchange['audio'], format='audio/mp3')
 
 # === Voice Recording ===
-col1, col2, col3 = st.columns([1,2,1])
-with col2:
-    audio_bytes = audio_recorder(
-        pause_threshold=5.0,
-        sample_rate=44100,
-        energy_threshold=(-1.0, 1.0),
-        key="mic_recorder",
-        text="",
-        recording_color="#ff4b4b",
-        neutral_color="#4b8df8",
-        icon_name="microphone",
-        icon_size="2x",
-        format="webm"
-    )
+st.markdown('<div class="mic-container">', unsafe_allow_html=True)
+audio_bytes = audio_recorder(
+    pause_threshold=5.0,
+    sample_rate=44100,
+    text="",
+    recording_color="#ff4b4b",
+    neutral_color="#4b8df8",
+    icon_name="microphone",
+    icon_size="2x",
+)
+st.markdown('</div>', unsafe_allow_html=True)
 
 # Visual feedback for recording state
 if audio_bytes:
