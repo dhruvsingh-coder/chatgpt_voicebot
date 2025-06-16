@@ -18,17 +18,36 @@ model = genai.GenerativeModel("gemini-1.5-flash")
 
 # === Simple UI ===
 st.title("🎙️ Voice Assistant")
-st.write("Press and hold to speak, release when done")
+st.markdown("""
+<style>
+    .mic-btn {
+        display: flex;
+        justify-content: center;
+        margin: 20px 0;
+    }
+    .mic-btn button {
+        background: #1e88e5;
+        color: white;
+        border: none;
+        border-radius: 50%;
+        width: 80px;
+        height: 80px;
+        font-size: 24px;
+        cursor: pointer;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        transition: all 0.3s;
+    }
+    .mic-btn button:active {
+        transform: scale(0.95);
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Initialize session state
 if 'conversation' not in st.session_state:
     st.session_state.conversation = []
-if 'last_audio_hash' not in st.session_state:
-    st.session_state.last_audio_hash = None
 if 'processing' not in st.session_state:
     st.session_state.processing = False
-if 'recording_done' not in st.session_state:
-    st.session_state.recording_done = False
 
 # Display chat history
 for msg in st.session_state.conversation:
@@ -39,36 +58,25 @@ for msg in st.session_state.conversation:
         if 'audio' in msg:
             st.audio(msg['audio'], format='audio/mp3')
 
-def get_audio_hash(audio_bytes):
-    return hashlib.md5(audio_bytes).hexdigest()
-
-# Audio recorder
+# Large microphone button
+st.markdown('<div class="mic-btn">', unsafe_allow_html=True)
 audio_bytes = audio_recorder(
-    pause_threshold=3.0,  # Shorter pause threshold for quicker response
+    pause_threshold=3.0,
     sample_rate=16000,
     text="",
     neutral_color="#1e88e5",
     recording_color="#e53935",
-    icon_name="mic",
-    icon_size="2x"
+    icon_name="microphone",
+    icon_size="3x"
 )
+st.markdown('</div>', unsafe_allow_html=True)
 
-# Detect when recording is done
-if audio_bytes:
-    if not st.session_state.recording_done:
-        st.session_state.recording_done = True
-        st.session_state.new_audio = audio_bytes
-elif st.session_state.recording_done:
-    st.session_state.recording_done = False
-    audio_bytes = st.session_state.new_audio
-    del st.session_state.new_audio
-
-# Audio processing
+# Audio processing functions
 def process_audio(audio_data):
     with NamedTemporaryFile(suffix=".wav") as tmp:
         tmp.write(audio_data)
         audio_file = genai.upload_file(tmp.name, mime_type="audio/wav")
-        response = model.generate_content(["Transcribe this audio:", audio_file])
+        response = model.generate_content(["Transcribe:", audio_file])
         genai.delete_file(audio_file.name)
         return response.text
 
@@ -77,39 +85,35 @@ def text_to_speech(text):
     gTTS(text, lang='en').write_to_fp(audio)
     return audio.getvalue()
 
-# Handle new audio automatically
-if 'new_audio' in st.session_state and not st.session_state.processing:
-    current_hash = get_audio_hash(st.session_state.new_audio)
+# Automatic processing when recording ends
+if audio_bytes and not st.session_state.processing:
+    st.session_state.processing = True
     
-    if current_hash != st.session_state.last_audio_hash:
-        st.session_state.processing = True
-        st.session_state.last_audio_hash = current_hash
-        
-        with st.spinner("Processing your question..."):
-            try:
-                # Show recording
-                st.audio(st.session_state.new_audio, format="audio/wav")
-                
-                # Transcribe
-                text = process_audio(st.session_state.new_audio)
-                st.session_state.conversation.append({'role': 'user', 'content': text})
-                
-                # Get response
-                response = model.generate_content(text)
-                response_text = response.text
-                response_audio = text_to_speech(response_text)
-                
-                st.session_state.conversation.append({
-                    'role': 'assistant', 
-                    'content': response_text,
-                    'audio': response_audio
-                })
-                
-            except Exception as e:
-                st.error(f"Error: {str(e)}")
-            finally:
-                st.session_state.processing = False
-                st.rerun()
+    with st.spinner("Processing your question..."):
+        try:
+            # Show recording
+            st.audio(audio_bytes, format="audio/wav")
+            
+            # Transcribe
+            text = process_audio(audio_bytes)
+            st.session_state.conversation.append({'role': 'user', 'content': text})
+            
+            # Get response
+            response = model.generate_content(text)
+            response_text = response.text
+            response_audio = text_to_speech(response_text)
+            
+            st.session_state.conversation.append({
+                'role': 'assistant', 
+                'content': response_text,
+                'audio': response_audio
+            })
+            
+        except Exception as e:
+            st.error(f"Error: {str(e)}")
+        finally:
+            st.session_state.processing = False
+            st.rerun()
 
 # Text input fallback
 if prompt := st.chat_input("Or type your question..."):
